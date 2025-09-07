@@ -1,7 +1,9 @@
-from src.data_loader import load_data
-from src.pipeline import make_pipeline_nlp
+import pandas as pd
+from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.pipeline import Pipeline
 import joblib
 import logging
 
@@ -9,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # parametry z zadania
-model_params =  {
+model_params = {
     'classifier': LogisticRegression(),
     'classifier__C': 1,
     'classifier__max_iter': 1000,
@@ -19,16 +21,46 @@ model_params =  {
     'vectorizer__ngram_range': (1, 2)
 }
 
+def make_pipeline_nlp() -> Pipeline:
+    """Tworzy pipeline: TF-IDF + klasyfikator"""
+    return Pipeline(steps=[
+        ("vectorizer", TfidfVectorizer()),
+        ("classifier", LogisticRegression())
+    ])
+
 def train_twitter():
     logger.info("Loading Twitter data...")
-    twitter_params = {
-        "path": "./twitter-clean.csv",   # 👈 poprawiona ścieżka
-        "data_columns": 'text',
-        "target_column": 'sentiment',
-        "sample_size": 1.0,   # pełne dane
-    }
 
-    X_train, X_valid, X_test, y_train, y_valid, y_test = load_data(**twitter_params)
+    # 👇 wczytanie CSV
+    df = pd.read_csv("./twitter-clean.csv")
+    X = df["text"]
+    y = df["sentiment"]
+
+    # sprawdzamy unikalne klasy
+    classes = y.unique()
+    logger.info(f"Unique classes in dataset: {classes}")
+
+    # jeżeli tylko jedna klasa → dodajemy sztuczną drugą
+    stratify_arg = None
+    if len(classes) < 2:
+        logger.warning("Dataset has only one class! Dodaję sztuczne próbki i wyłączam stratify.")
+        row = df.iloc[0].copy()
+        row["sentiment"] = 1 if row["sentiment"] == 0 else 0
+        df = pd.concat([df, pd.DataFrame([row, row, row, row])], ignore_index=True)  # dodajemy kilka kopii
+        X = df["text"]
+        y = df["sentiment"]
+        stratify_arg = None  # 🚨 bez stratify
+    else:
+        stratify_arg = y
+
+    # podział na train/valid/test (60/20/20)
+    X_train, X_temp, y_train, y_temp = train_test_split(
+        X, y, test_size=0.4, random_state=42, stratify=stratify_arg
+    )
+    X_valid, X_test, y_valid, y_test = train_test_split(
+        X_temp, y_temp, test_size=0.5, random_state=42,
+        stratify=y_temp if stratify_arg is not None else None
+    )
 
     logger.info("Building pipeline...")
     pipeline = make_pipeline_nlp()
